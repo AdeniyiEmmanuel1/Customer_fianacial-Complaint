@@ -1,0 +1,166 @@
+/* CREATING STORED PROCEDURE*/
+PRINT'==========================================================================================================='
+PRINT'STORED PROCEDURE: LOADING BRONZE LAYER';
+PRINT'==========================================================================================================='
+PRINT'==========================================================================================================='
+PRINT'Script Purpose
+        The purpose of this stored procedure is to load data into the Himalayan schema from external CSV files.
+        It performs the following actions:
+
+          -  Truncates the Himalayan table before loading the data
+
+          -  Uses the Bulk Insert command to load data from the CSV files into the Himalayan tables
+            Parameter: None
+
+      NB-  This stored Procedure does not use any parameter'
+PRINT'============================================================================================================'
+
+CREATE or ALTER PROCEDURE bronze.load_bronzelayer 
+AS
+DECLARE @Start_Time DATETIME, @End_Time DATETIME, @Batch_Start_Time DATETIME, @Batch_End_Time DATETIME; --------- This is to declare variables @Start_Time and @End_Time to calculate duration
+BEGIN
+    
+    BEGIN TRY ------------- To check for errors running the script
+    SET @Batch_Start_Time = GETDATE()
+    PRINT'==========================================================='
+    PRINT'Loading Bronze Layer';
+    PRINT'==========================================================='
+
+    PRINT'-----------------------------------------------------------'
+    PRINT'Loading Exped Tables';
+    PRINT'-----------------------------------------------------------'
+
+    SET @Start_Time = GETDATE();
+
+    PRINT'>>>Truncating Table: Bronze.Himalayan_Exped';
+
+    TRUNCATE TABLE Bronze.Himalayan_Exped;
+
+    BULK INSERT Bronze.Himalayan_Exped
+    FROM 'C:\Users\MSI\Desktop\waypoint\Expenditure.csv'
+    WITH
+    (
+        FORMAT = 'CSV',
+        FIRSTROW = 2,
+        FIELDQUOTE = '"',
+        FIELDTERMINATOR = ',',
+        ROWTERMINATOR = '0x0A',
+        TABLOCK,
+        KEEPNULLS
+    ); 
+
+    SET @End_Time = GETDATE();
+    PRINT'>> load Duration:' + CAST(DATEDIFF(second,@Start_Time,@End_Time) AS NVARCHAR) + ' seconds'
+    PRINT'>> ---------------------------------------------------------'
+    Select * ----------------------------- To cross check rows and columns
+    From Bronze.Himalayan_Exped;
+
+    /*
+    =====
+    2
+    ======
+    */
+    PRINT'-----------------------------------------------------------'
+    PRINT'Loading members Tables';
+    PRINT'-----------------------------------------------------------'
+
+    SET @Start_Time = GETDATE ();
+    PRINT'>>>Truncating Table: Bronze.Himalayan_Members';
+    TRUNCATE TABLE Bronze.Himalayan_Members; ------ To avoid reloading data into Tables
+
+    BULK INSERT Bronze.Himalayan_Members
+    FROM 'C:\Users\MSI\Desktop\waypoint\memberrs.csv'
+    WITH
+    (
+        FORMAT = 'CSV',
+        FIRSTROW = 2,
+        FIELDQUOTE = '"',
+        FIELDTERMINATOR = ',',
+        ROWTERMINATOR = '0x0A',
+        TABLOCK,
+        KEEPNULLS
+    ); 
+    SET @End_Time = GETDATE();
+    PRINT'>> load Duration:' + CASt(DATEDIFF(second,@Start_Time,@End_Time) AS NVARCHAR) + ' seconds'
+    PRINT'>> ---------------------------------------------------------'
+    /*Select * ----------------------------- To cross check rows and columns
+    From Bronze.Himalayan_Members;
+
+    Select count(*) ----------------------------- To cross check rows and columns
+    From Bronze.Himalayan_Members;*/
+
+    /*
+    =====
+    3
+    ======
+    */
+    PRINT'-----------------------------------------------------------'
+    PRINT'Loading peaks Tables';
+    PRINT'-----------------------------------------------------------'
+
+    SET @Start_Time = GETDATE();
+    PRINT'>>>Truncating Table: Bronze.Himalayan_Peaks';
+    TRUNCATE TABLE Bronze.Himalayan_Peaks; ------ To avoid reloading data into Tables
+
+    BULK INSERT Bronze.Himalayan_Peaks
+    FROM 'C:\Users\MSI\Desktop\waypoint\peakss_bulkready.csv'
+    WITH
+    (
+        FORMAT = 'CSV',
+        FIRSTROW = 2,
+        FIELDQUOTE = '"',
+        FIELDTERMINATOR = ',',
+        ROWTERMINATOR = '0x0A',
+        TABLOCK,
+        KEEPNULLS
+    ); 
+
+    SET @End_Time = GETDATE();
+    PRINT'>> load Duration:' + CASt(DATEDIFF(second,@Start_Time,@End_Time) AS NVARCHAR) + ' seconds'
+    PRINT'>> ---------------------------------------------------------'
+
+    /*Select * ----------------------------- To cross check rows and columns
+    From Bronze.Himalayan_Peaks;
+
+    Select count(*) ----------------------------- To cross check rows and columns
+    From Bronze.Himalayan_Peaks;*/
+
+    /*
+    =====
+    4
+    ======
+    */
+   /* PRINT'-----------------------------------------------------------'
+    PRINT'Loading refer Tables';
+    PRINT'-----------------------------------------------------------'
+
+    SET @Start_Time = GETDATE();
+    PRINT'>>>Truncating Table: Bronze.Himalayan_Refer'
+    TRUNCATE TABLE Bronze.Himalayan_Refer; ------ To avoid reloading data into Tables
+
+    BULK INSERT Bronze.Himalayan_Refer
+    FROM 'C:\Users\MSI\Desktop\data analysis\Himalayan+Expeditions\refer.csv'
+    WITH (
+    FIRSTROW = 2,
+    FIELDTERMINATOR = ',',
+    TABLOCK);
+    SET @End_Time = GETDATE();
+    PRINT'>> load Duration:' + CASt(DATEDIFF(second,@Start_Time,@End_Time) AS NVARCHAR) + ' seconds'
+    PRINT'>> ---------------------------------------------------------'
+    /*Select * ----------------------------- To cross check rows and columns
+    From Bronze.Himalayan_Refer;*/*/
+
+    PRINT'>> ---------------------------------------------------------'
+    SET @Batch_End_Time = GETDATE();
+    PRINT'================================================'
+    PRINT' ------ Batch loading completed-----------------'
+    PRINT'>> Batch load Duration:' + CAST(DATEDIFF(second,@Batch_Start_Time,@Batch_End_Time) AS NVARCHAR) + ' seconds'
+    END TRY
+    BEGIN CATCH
+    PRINT'================================================'
+    PRINT'Error occured during loading Bronze'
+    PRINT'Error Message' + CAST(Error_Number () AS NVARCHAR) ------------------ casting to convert interger to string
+    PRINT'================================================'
+    END CATCH
+    
+END
