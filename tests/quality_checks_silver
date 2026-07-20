@@ -1,0 +1,404 @@
+PRINT '===========================================================================================================';
+PRINT 'SILVER LAYER DATA QUALITY CHECKS';
+PRINT '===========================================================================================================';
+PRINT '===========================================================================================================';
+PRINT 'Script Purpose
+        The purpose of this script is to perform comprehensive data quality validation
+        and integrity checks on the Silver layer tables of the Himalayan Expedition
+        Data Warehouse. The script verifies that the transformed data conforms to
+        business rules and data quality standards before it is used for reporting
+        and downstream Gold layer transformations.
+
+        The script performs the following quality assurance activities:
+
+          - Detects duplicate records and validates primary key uniqueness.
+
+          - Identifies NULL values and missing key identifiers.
+
+          - Checks for unwanted leading and trailing spaces.
+
+          - Verifies data consistency across related attributes.
+
+          - Standardizes inconsistent text values and categorical data.
+
+          - Validates date and time formats and logical date relationships.
+
+          - Confirms data cleansing and transformation rules have been applied correctly.
+
+          - Enforces entity integrity through primary key constraints.
+
+        Parameter: None
+
+      NB - This script is intended solely for data quality validation and does not
+           modify source data except where primary key constraints are created.';
+PRINT '===========================================================================================================';
+
+SELECT 
+    expid, 
+    membid, 
+    fname, 
+    lname, 
+    COUNT(*) AS records_count
+FROM Silver.Himalayan_Members
+GROUP BY expid, membid, fname, lname
+HAVING COUNT(*) > 1 OR expid IS NULL;
+
+SELECT 
+    expid, 
+    membid, 
+    COUNT(*) AS occurrence_count
+FROM Bronze.Himalayan_Members
+GROUP BY expid, membid
+HAVING COUNT(*) > 1 OR expid IS NULL;
+
+SELECT 
+    expid,
+    membid,
+    fname, 
+    lname
+FROM Bronze.Himalayan_Members
+Where expid = 'EVER24101'
+
+SELECT *
+FROM (
+    SELECT 
+        expid, 
+        membid, 
+        fname, 
+        lname,
+        ROW_NUMBER() OVER (PARTITION BY expid, membid ORDER BY fname) AS rn
+    FROM Silver.Himalayan_Members
+) t
+WHERE t.expid IN (
+    -- This subquery identifies only the clashing IDs
+    SELECT expid 
+    FROM Silver.Himalayan_Members 
+    GROUP BY expid, membid 
+    HAVING COUNT(*) > 1
+)
+ORDER BY t.expid, t.membid
+
+
+--Checking for duplicates
+Select *
+From (
+Select expid,
+Row_Number() over (partition by expid Order by expid) rn
+From Bronze.Himalayan_Members) t
+where t.rn > 1;
+
+--Building the Primary Key
+ALTER TABLE Silver.Himalayan_Members 
+ALTER COLUMN expid NVARCHAR(15) NOT NULL;
+
+ALTER TABLE Silver.Himalayan_Members 
+ALTER COLUMN membid SMALLINT NOT NULL;
+
+-- 2. Permanently establish the Composite Primary Key
+ALTER TABLE Silver.Himalayan_Members
+ADD CONSTRAINT PK_Himalayan_Members PRIMARY KEY (expid, membid)
+
+
+ Checking for unwanted spaces*/
+
+Select *
+from Bronze.Himalayan_Peaks
+Where pkname2 != TRIM(pkname2);
+----Where expid = TRIM(expid)
+
+--creating CTE for data standidisation\
+WITH Step1_RemoveQuestionMarks AS (
+    SELECT *,
+        TRIM(LEFT(TRIM(restrictt), CHARINDEX('?', TRIM(restrictt) + '?') - 1)) AS restrictt_cleaned
+    FROM Bronze.Himalayan_Peaks
+),
+Step2_RemoveCommas AS (
+    SELECT *,
+        ISNULL(TRIM(LEFT(TRIM(restrictt_cleaned), CHARINDEX(',', TRIM(restrictt_cleaned) + ',') - 1)), 'N/A') AS restrictt_clear
+    FROM Step1_RemoveQuestionMarks
+),
+Step3_RemoveParentheses AS (
+    SELECT *,
+        ISNULL(TRIM(LEFT(TRIM(restrictt_clear), CHARINDEX('(', TRIM(restrictt_clear) + '(') - 1)), 'N/A') AS restrictt_del
+    FROM Step2_RemoveCommas
+)
+SELECT
+    peakid,
+    restrictt,
+    -- Final cleaned restriction status before semicolons
+    ISNULL(TRIM(LEFT(TRIM(restrictt_del), CHARINDEX(';', TRIM(restrictt_del) + ';') - 1)), 'N/A') AS restrictt
+FROM Step3_RemoveParentheses;
+Select *
+From Bronze.Himalayan_Peaks;
+
+Select distinct pcountry
+from Bronze.Himalayan_Peaks
+
+select *
+from Bronze.Himalayan_Exped;
+
+
+SELECT 
+    pexpid,
+    COUNT(*) AS pexpid
+FROM Bronze.Himalayan_Peaks
+WHERE pexpid IS NOT NULL AND TRIM(pexpid) <> ''
+GROUP BY pexpid
+HAVING COUNT(*) = 1;
+---Correcting for standardization
+Select pmonth,
+CASE UPPER(Trim(pmonth))
+WHEN 'Feb' THEN 'February'
+WHEN 'Apr' THEN 'April'
+WHEN 'Aug' THEN 'August'
+WHEN 'Dec' THEN 'December'
+WHEN 'Jul' THEN 'July'
+WHEN 'Jun' THEN 'June'
+WHEN 'Mar' THEN 'March'
+WHEN 'Nov' THEN 'November'
+WHEN 'Oct' THEN 'October'
+WHEN 'Sep' THEN 'September'
+WHEN 'May' THEN 'May'
+Else 'N/A'
+END pmonth
+from Bronze.Himalayan_Peaks;
+--Date check
+--- checking if the summit date is hiher than the bsase camp date
+
+select 
+smtdate,
+termdate
+from Bronze.Himalayan_Exped
+where smtdate > termdate;
+
+--- Correcting the time structure
+Select distinct
+first_ascent_date,
+TRY_CONVERT(DATE, first_ascent_date, 23) AS first_ascent_date
+from Bronze.Himalayan_Peaks;
+
+select smttime, 
+TRY_CAST(
+        CASE 
+            WHEN smttime IS NULL THEN NULL
+            ELSE 
+                -- 1. Convert float to integer, then to a string
+                -- 2. Right-pad it out with leading zeros so it's always 4 characters (e.g., '930' becomes '0930')
+                -- 3. Insert the ':' between hours and minutes
+                STUFF(RIGHT('0000' + CAST(CAST(smttime AS INT) AS VARCHAR(4)), 4), 3, 0, ':')
+        END AS TIME(0)
+    ) AS smttime
+    from Bronze.Himalayan_Exped; 
+
+## Explanation of the above
+CAST(smttime AS INT)
+What it does: It strips off the decimal point by forcing the float value into a whole integer.
+Example: 1530.0 becomes 1530. 900.0 becomes 900.
+
+Step B: Changing Numbers to Text SQL
+CAST(... AS VARCHAR(4))
+
+What it does: It converts that raw integer into a string of text characters so that SQL Server can manipulate it like words.
+Example: The number 1530 becomes the string text '1530'.
+
+Step C: Padding Morning Times with Zeros
+RIGHT('0000' + ..., 4)
+What it does: If an expedition reached the summit at 9:00 AM, the text is only 3 characters long ('900'). 
+This step glues 0000 to the front of the text ('0000900'), and then chops off everything except the rightmost 4 characters.
+Example:
+'1530' stays '1530'
+'900' becomes '0900' (safely creating a standardized 4-character time string!).
+
+Step D: Injecting the Colon (:)
+SQL
+STUFF(..., 3, 0, ':')
+What it does: The STUFF function deletes and inserts characters. 
+The arguments mean: "Go to position 3, delete 0 characters, and insert a ':' there."
+Example:
+'1530' becomes '15:30'
+'0900' becomes '09:00'
+
+Guardrails & Data Type Casting
+Now that the string looks like a standard time format, the outer functions make sure it integrates cleanly into your database without crashing:
+
+TRY_CAST(
+    CASE 
+        WHEN smttime IS NULL THEN NULL
+        ELSE ...
+    END AS TIME(0)
+) AS smttime
+
+
+/* Before performing any text manipulation, the code checks WHEN smttime IS NULL THEN NULL.  
+If a row has a missing summit time, it passes right through as a native database NULL instead of processing it, preventing errors.
+
+Why use TIME(0)? The (0) means "zero decimal places for seconds". 
+It keeps your time tight and clean as HH:MM:SS (e.g., 15:30:00) without trailing fractional milliseconds.
+Why use TRY_CAST instead of regular CAST? 
+In large datasets, there is always a chance of corrupt data (for example, a typo in the source file like 2560.0).
+
+A normal CAST function would crash your entire migration script.
+TRY_CAST is a defensive programming function: if it runs into an impossible time,
+it will gracefully turn that single row into a NULL and allow your query to finish successfully.*/
+
+/* Checking for consistency
+select distinct phost
+from Bronze.Himalayan_Peaks;
+
+select distinct himal,
+     ISNULL(TRIM(LEFT(
+            TRIM(himal),
+            CHARINDEX('/', TRIM(himal) + '/') - 1
+        )), 'N/A') himal
+from Bronze.Himalayan_Peaks;
+       /* -- United Kingdom variants
+        WHEN 'UK'           THEN 'United Kingdom'
+        WHEN 'England'      THEN 'United Kingdom'
+        WHEN 'Great Britain'THEN 'United Kingdom'
+        WHEN 'Scotland'     THEN 'United Kingdom'
+        WHEN 'Wales'        THEN 'United Kingdom'
+        WHEN 'Britain'      THEN 'United Kingdom'
+
+        -- United States variants
+        WHEN 'USA'          THEN 'United States'
+        WHEN 'US'           THEN 'United States'
+        WHEN 'United States of America' THEN 'United States'
+        WHEN 'America'      THEN 'United States'
+
+        -- Germany variants
+        WHEN 'W Germany'    THEN 'Germany'
+        WHEN 'E Germany'    THEN 'Germany'
+        WHEN 'West Germany' THEN 'Germany'
+        WHEN 'East Germany' THEN 'Germany'
+
+        -- Russia / Soviet Union
+        WHEN 'USSR'         THEN 'Russia'
+        WHEN 'Soviet Union' THEN 'Russia'
+        WHEN 'Soviet'       THEN 'Russia'
+
+        -- Czech Republic
+        WHEN 'Czech Republic' THEN 'Czechia'
+        WHEN 'Czechoslovakia' THEN 'Czechia'
+
+        -- South Korea & Asia
+        WHEN 'Republic of Korea' THEN 'South Korea'
+        WHEN 'S Korea'           THEN 'South Korea'
+        WHEN 'Kyrgz Republic'    THEN 'Kyrgyzstan'
+
+        -- Everything already clean passes through unchanged
+        ELSE TRIM(LEFT(
+                TRIM(nation),
+                CHARINDEX('/', TRIM(nation) + '/') - 1
+             ))
+    END AS nation_2
+ ;*/
+
+ --- Data standidization (removing unnecessary details)
+ /*here i was able to remove unnecessary details in a row that has mutiple input by using the CHARINDEX(',', TRIM(termreason_cleaned) + ',')*/
+ Select distinct
+ restrictt,
+ ISNULL(TRIM(LEFT(
+            TRIM(restrictt_del),CHARINDEX(';', TRIM(restrictt_del) + ';') - 1
+        )),'N/A') AS restrictt
+ from (
+ Select
+  *,
+    ISNULL(TRIM(LEFT(
+            TRIM(restrictt_clear),CHARINDEX('(', TRIM(restrictt_clear) + '(') - 1
+        )),'N/A') AS restrictt_del
+from (
+ select
+    *,
+    ISNULL(TRIM(LEFT(
+            TRIM(restrictt_cleaned),CHARINDEX(',', TRIM(restrictt_cleaned) + ',') - 1
+        )),'N/A') AS restrictt_clear
+ from (
+        select *,
+        TRIM(LEFT(
+        TRIM(restrictt),CHARINDEX('?', TRIM(restrictt) + '?') - 1
+        )) AS restrictt_cleaned
+        from Bronze.Himalayan_Peaks)t)t)t
+
+ select * 
+ from Bronze.Himalayan_Exped;
+ /* EXPLANATION OF THE ABOVE 
+
+ Layer 1 — The Innermost Piece: Extracting the Primary Nation
+This is the core extraction logic. It appears twice in the expression — once in the CASE input and once in the ELSE. Understanding it once means you understand both.
+sqlTRIM(LEFT(
+    TRIM(nation),
+    CHARINDEX('/', TRIM(nation) + '/') - 1
+))
+There are four functions here, working from the inside out:
+
+TRIM(nation)
+sqlTRIM(nation)
+Simply removes any leading or trailing spaces from the raw nation value before anything else happens. This prevents bugs where ' UK' or 'Nepal ' would fail to match correctly.
+So '  Nepal/Australia  ' becomes 'Nepal/Australia'.
+
+TRIM(nation) + '/'
+sqlTRIM(nation) + '/'
+Appends a / to the end of the string.
+So 'Nepal/Australia' becomes 'Nepal/Australia/'
+And 'France' becomes 'France/'
+Why? Because of what comes next — CHARINDEX needs to find a /. For a single-country value like 'France' there is no / in the original string, so CHARINDEX would return 0, which would break the LEFT calculation. By adding a / at the end, you guarantee there is always at least one slash to find, even for single-country values.
+
+CHARINDEX('/', TRIM(nation) + '/')
+sqlCHARINDEX('/', TRIM(nation) + '/')
+CHARINDEX finds the position of the first occurrence of a character inside a string. It returns a number.
+
+CHARINDEX(...) - 1
+sqlCHARINDEX('/', TRIM(nation) + '/') - 1
+Subtracts 1 from the position. This gives you the length of the primary nation name — everything before the first slash.
+
+Examples:
+nationCHARINDEXminus 1'Nepal/Australia'65 ? length of "Nepal"'France'76 ? length of "France"'USA/UK/Japan'43 ? length of "USA"
+
+LEFT(TRIM(nation), ...)
+sqlLEFT(TRIM(nation), CHARINDEX('/', TRIM(nation) + '/') - 1)
+LEFT takes the first N characters of a string. Here N is the number you just calculated — the length of the primary nation name.
+Examples:
+nationNLEFT result'Nepal/Australia'5'Nepal''France'6'France''USA/UK/Japan'3'USA'
+
+The outer TRIM
+sqlTRIM(LEFT(...))
+One final trim around the result in case there were spaces around the slash, e.g. 'Nepal / Australia' would give 'Nepal ' from LEFT, so the outer TRIM cleans that trailing space off.
+
+What you have now
+After all of this, you have extracted a single clean value — the primary nation — from whatever raw string was in the column:
+'Nepal/Australia/UK'  ?  'Nepal'
+'France'              ?  'France'
+'USA/UK/Japan'        ?  'USA'
+'UK'                  ?  'UK'
+
+Layer 2 — The CASE: Standardising the Extracted Value
+Now that you have a clean single nation name, the CASE expression checks it and replaces non-standard variants with their standard form.
+sqlCASE  TRIM(LEFT(TRIM(nation), CHARINDEX('/', TRIM(nation) + '/') - 1))
+    WHEN 'UK'            THEN 'United Kingdom'
+    WHEN 'England'       THEN 'United Kingdom'
+    WHEN 'Great Britain' THEN 'United Kingdom'
+    ...
+    WHEN 'USA'           THEN 'United States'
+    WHEN 'US'            THEN 'United States'
+    ...
+    ELSE TRIM(LEFT(TRIM(nation), CHARINDEX('/', TRIM(nation) + '/') - 1))
+END
+This is a simple CASE expression. SQL Server evaluates the expression once, then walks down the WHEN list until it finds a match.
+
+If the extracted value is 'UK' ? it returns 'United Kingdom'
+If the extracted value is 'USA' ? it returns 'United States'
+If the extracted value is 'Nepal' ? no WHEN matches ? falls to ELSE
+
+The ELSE clause:
+sqlELSE TRIM(LEFT(
+        TRIM(nation),
+        CHARINDEX('/', TRIM(nation) + '/') - 1
+     ))
+This repeats the same extraction logic. It means: if the value does not need standardising, just return the extracted value as-is.
+So 'Nepal', 'France', 'Japan', 'India' — anything already clean — passes straight through unchanged.*/
+
+select 
+    route1,
+    ISNULL(TRIM(route1),'N/A') route1--- HANDLING nulls
+from Bronze.Himalayan_Exped
+where route1 IS NULL;
