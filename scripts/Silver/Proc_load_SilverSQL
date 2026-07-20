@@ -1,5 +1,28 @@
+/* CREATING STORED PROCEDURE*/
+PRINT'==========================================================================================================='
+PRINT'STORED PROCEDURE: LOADING SILVER LAYER';
+PRINT'==========================================================================================================='
+PRINT'==========================================================================================================='
+PRINT 'Script Purpose
+        The purpose of this stored procedure is to load cleansed and standardized data into the Silver layer
+        tables from the Bronze layer. It performs the following actions:
 
+          -  Truncates the existing Silver layer tables before loading new data.
 
+          -  Cleans, validates, and transforms the Bronze layer data by removing duplicates,
+             standardizing text values, converting data types, handling NULL values,
+             and applying business transformation rules.
+
+          -  Loads the transformed data into the Himalayan_Exped, Himalayan_Members,
+             and Himalayan_Peaks Silver layer tables.
+
+          -  Records the execution time for each table load and the overall batch process,
+             while providing error handling and execution status messages.
+
+            Parameter: None
+
+      NB - This stored procedure does not use any parameter.';
+PRINT'============================================================================================================'
 
 CREATE OR ALTER PROCEDURE Silver.load_SilverHimalayan
 AS
