@@ -1,30 +1,16 @@
-/* CREATING STORED PROCEDURE*/
-PRINT'==========================================================================================================='
-PRINT'STORED PROCEDURE: LOADING SILVER LAYER';
-PRINT'==========================================================================================================='
-PRINT'==========================================================================================================='
-PRINT 'Script Purpose
-        The purpose of this stored procedure is to load cleansed and standardized data into the Silver layer
-        tables from the Bronze layer. It performs the following actions:
+/* =====================================================================
+   SILVER LAYER
+   Project : Bank of America Consumer Complaints (CFPB, 2017-2023)
+   Purpose : Explore, clean, standardize, normalize, and enrich the
+             Bronze data. Every column here is either a cleaned source
+             column or a derived column that feeds a Gold-layer answer.
+   ===================================================================== */
 
-          -  Truncates the existing Silver layer tables before loading new data.
+-----To Create a Data Structure
+USE Customer_Complaints;
+GO
 
-          -  Cleans, validates, and transforms the Bronze layer data by removing duplicates,
-             standardizing text values, converting data types, handling NULL values,
-             and applying business transformation rules.
-
-          -  Loads the transformed data into the Himalayan_Exped, Himalayan_Members,
-             and Himalayan_Peaks Silver layer tables.
-
-          -  Records the execution time for each table load and the overall batch process,
-             while providing error handling and execution status messages.
-
-            Parameter: None
-
-      NB - This stored procedure does not use any parameter.';
-PRINT'============================================================================================================'
-
-CREATE OR ALTER PROCEDURE Silver.load_SilverHimalayan
+CREATE OR ALTER PROCEDURE Silver.load_Silver_Customer_Complaints
 AS
 BEGIN
     DECLARE @Start_Time DATETIME, 
@@ -41,326 +27,189 @@ BEGIN
         -- =========================================================================
         -- 1. LOAD SILVER.HIMALAYAN_EXPED
         -- =========================================================================
-        SET @Start_Time = GETDATE();
-        PRINT '>>> Truncating Table: Silver.Himalayan_Exped';
-        TRUNCATE TABLE Silver.Himalayan_Exped;
+ 
+INSERT INTO Silver.Customer_Complaints_Raw (
+    complaint_id,
+    submitted_via,
+    date_submitted,                 
+    date_received,                  
+    state_code,                     
+    product,                    
+    sub_product,                   
+    issue,                          
+    sub_issue,                      
+    company_public_response,       
+    company_response_to_consumer,   
+    timely_response,               
+    product_category,              
+    sub_product_category,         
+    issue_category,                 
+    sub_issue_category,             
+    is_timely_response,           
+    has_public_response,           
+    resolution_category,           
+    response_lag_days,              
+    submission_year,               
+    submission_month,                   
+    submission_month_name,          
+    submission_quarter,                 
+    submission_day_of_week,         
+    submission_year_month,          
+    us_region                    
+)
+SELECT
+    complaint_id,
+    TRIM(submitted_via),
+    date_submitted,
+    date_received,
+    UPPER(TRIM(state)) state_code,
+    TRIM(product),
+    COALESCE(NULLIF(TRIM(sub_product), ''), 'Not Specified'),
+    TRIM(issue),
+    COALESCE(NULLIF(TRIM(sub_issue), ''), 'Not Specified'),
+    COALESCE(NULLIF(TRIM(company_public_response), ''), 'No Public Response'),
+    TRIM(company_response_to_consumer),
+    COALESCE(TRIM(timely_response), 'Pending'),
+    ----Handling atomicity in product
+    CASE
+        WHEN product = 'Debt collection' THEN 'Debt Collection'
+        WHEN product = 'Mortgage'        THEN 'Mortgage'
+        WHEN product = 'Student loan'    THEN 'Student Loan'
+        WHEN product = 'Checking or savings account' THEN
+            CASE
+                WHEN sub_product = 'Checking account'               THEN 'Checking Account'
+                WHEN sub_product = 'Savings account'                THEN 'Savings Account'
+                WHEN sub_product = 'CD (Certificate of Deposit)'    THEN 'Certificate of Deposit'
+                ELSE 'Other Banking Product'
+            END
+        WHEN product = 'Credit card or prepaid card' THEN
+            CASE
+                WHEN sub_product LIKE '%credit card%'               THEN 'Credit Card'
+                WHEN sub_product IN ('General-purpose prepaid card','Gift card',
+                                      'Payroll card','Government benefit card')
+                                                                      THEN 'Prepaid Card'
+                ELSE 'Credit or Prepaid Card (Other)'
+            END
+        WHEN product = 'Payday loan, title loan, or personal loan' THEN
+            CASE
+                WHEN sub_product IN ('Payday loan','Payday loan debt')     THEN 'Payday Loan'
+                WHEN sub_product = 'Title loan'                            THEN 'Title Loan'
+                WHEN sub_product IN ('Personal line of credit','Installment loan')
+                                                                             THEN 'Personal Loan'
+                ELSE 'Payday/Title/Personal Loan (Other)'
+            END
+        WHEN product = 'Money transfer, virtual currency, or money service' THEN
+            CASE
+                WHEN sub_product LIKE '%money transfer%'            THEN 'Money Transfer'
+                WHEN sub_product = 'Virtual currency'                THEN 'Virtual Currency'
+                ELSE 'Money Service (Other)'
+            END
+        WHEN product = 'Credit reporting, credit repair services, or other personal consumer reports' THEN
+            CASE
+                WHEN sub_product = 'Credit reporting'                THEN 'Credit Reporting'
+                WHEN sub_product = 'Credit repair services'          THEN 'Credit Repair'
+                ELSE 'Other Personal Consumer Report'
+            END
+        WHEN product = 'Vehicle loan or lease' THEN
+            CASE
+                WHEN sub_product = 'Lease' THEN 'Vehicle Lease'
+                ELSE 'Vehicle Loan'
+            END
+        ELSE TRIM(product)
+    END as product_category, 
+    CASE
+        WHEN sub_product IS NULL OR TRIM(sub_product) IN ('', 'Not Specified', 'I do not know') THEN 'Not Specified'
+        WHEN TRIM(sub_product) LIKE '%Home equity loan%'                  THEN 'Home Equity Loan/Line of Credit'
+        WHEN TRIM(sub_product) = 'CD (Certificate of Deposit)'            THEN 'Certificate of Deposit'
+        WHEN TRIM(sub_product) LIKE '%General-purpose credit card%'       THEN 'General Purpose Credit Card'
+        WHEN TRIM(sub_product) LIKE '%Mobile or digital wallet%'          THEN 'Digital Wallet'
+        WHEN TRIM(sub_product) LIKE '%Other banking product or service%' THEN 'Other Banking Product'
+        ELSE TRIM(sub_product)
+    END as sub_product_category,
+    ----Handling atomicity in issue 
+    CASE
+        WHEN TRIM(issue) LIKE '%Incorrect information%'
+          OR TRIM(issue) LIKE '%False statements%'
+          OR TRIM(issue) LIKE '%Improper use%'                            THEN 'Incorrect / Misleading Information'
+        WHEN TRIM(issue) LIKE '%Closing%'
+          OR TRIM(issue) LIKE '%Opening%'
+          OR TRIM(issue) LIKE '%Getting%'
+          OR TRIM(issue) LIKE '%Applying%'                                THEN 'Account Opening, Closing & Servicing'
+        WHEN TRIM(issue) LIKE '%Fees%'
+          OR TRIM(issue) LIKE '%interest%'
+          OR TRIM(issue) LIKE '%charged%'                                 THEN 'Fees & Interest Rates'
+        WHEN TRIM(issue) LIKE '%Fraud%'
+          OR TRIM(issue) LIKE '%scam%'
+          OR TRIM(issue) LIKE '%identity theft%'                          THEN 'Fraud & Security'
+        WHEN TRIM(issue) LIKE '%investigation%'
+          OR TRIM(issue) LIKE '%dispute%'                                 THEN 'Dispute & Investigation'
+        WHEN TRIM(issue) LIKE '%Struggling to%pay%'                       THEN 'Payment & Collection Issues'
+        WHEN TRIM(issue) LIKE '%payment%'                                 THEN 'Payment & Collection Issues'
+        WHEN TRIM(issue) LIKE '%overdraft%'                               THEN 'Account Features & Add-ons'
+        ELSE TRIM(issue)
+    END issue_category,
+    CASE
+        WHEN sub_issue IS NULL OR TRIM(Sub_Issue) IN ('', 'Not Specified') THEN 'Not Specified'
+        WHEN sub_issue LIKE '%incorrect%'
+          OR sub_issue LIKE '%wrong%'                                     THEN 'Incorrect Information'
+        WHEN sub_issue LIKE '%fraud%'
+          OR sub_issue LIKE '%identity theft%'                            THEN 'Fraud & Identity Theft'
+        WHEN sub_issue LIKE '%fee%'
+          OR sub_issue LIKE '%charge%'                                    THEN 'Fees & Overcharges'
+        WHEN sub_issue LIKE '%dispute%'
+          OR sub_issue LIKE '%investigation%'                             THEN 'Disputes & Claims'
+        WHEN sub_issue LIKE '%payment%'
+          OR sub_issue LIKE '%withdrawal%'                                THEN 'Payments & Transfers'
+        WHEN sub_issue LIKE '%close%'
+          OR sub_issue LIKE '%cancel%'                                    THEN 'Account Closure & Cancellation'
+        ELSE TRIM(sub_issue)
+    END sub_issue_category,
+   CASE 
+       WHEN UPPER(TRIM(timely_response)) = 'YES' THEN 1 
+       ELSE 0 
+   END AS is_timely_response, ---- changing timely_response to bit
+   CASE 
+        WHEN company_public_response IS NOT NULL THEN 1 ELSE 0 
+   END has_public_response, ---- changing company_public_response to bit
+   CASE
+        WHEN company_response_to_consumer = 'Closed with monetary relief'      THEN 'Monetary Relief'
+        WHEN company_response_to_consumer = 'Closed with non-monetary relief'  THEN 'Non-Monetary Relief'
+        WHEN company_response_to_consumer = 'Closed with explanation'          THEN 'Explanation Only'
+        WHEN company_response_to_consumer = 'In progress'                     THEN 'In Progress'
+        WHEN company_response_to_consumer = 'Closed'                          THEN 'Unresolved'  -- no relief detail given
+        ELSE 'Unresolved'
+    END resolution_category,
+    DATEDIFF(DAY, date_submitted, date_received) response_lag_days,
+    YEAR(date_submitted) submission_year,
+    MONTH(date_submitted) submission_month,
+    DATENAME(MONTH, date_submitted) submission_month_name,
+    'Q' + CAST(DATEPART(QUARTER, date_submitted) AS CHAR(1)) submission_quarter,
+    DATENAME(WEEKDAY, date_submitted) submission_day_of_week,
+    FORMAT(date_submitted, 'yyyy-MM') submission_year_month,
 
-        PRINT '>> Inserting Data Into Silver.Himalayan_Exped';
-        INSERT INTO Silver.Himalayan_Exped (
-            expid, peakid, year_id, season, host, route1, route2, route3, route4, nation,
-            leaders, sponsor, success1, success2, success3, success4, ascent1, ascent2,
-            ascent3, ascent4, claimed, disputed, countries, approach, bcdate, smtdate,
-            smttime, smtdays, totdays, termdate, termreason, termnote, highpoint, traverse,
-            ski, parapente, camps, rope, totmembers, smtmembers, mdeaths, tothired,
-            smthired, hdeaths, nohired, o2used, o2none, o2climb, o2descent, o2sleep,
-            o2medical, o2taken, o2unkwn, othersmts, campsites, accidents, achievment,
-            agency, comrte, stdrte, primrte, primmem, primref, primid, chksum
-        )
-        SELECT 
-            TRIM(expid) AS expid,        
-            TRIM(peakid) AS peakid,
-            year_id, 
-            TRIM(season) AS season,
-            TRIM(host) AS host,
-            ISNULL(TRIM(route1),'N/A') AS route1,
-            ISNULL(TRIM(route2),'N/A') AS route2, 
-            ISNULL(TRIM(route3),'N/A') AS route3,
-            ISNULL(TRIM(route4),'N/A') AS route4,
-            CASE UPPER(TRIM(LEFT(TRIM(nation), CHARINDEX('/', TRIM(nation) + '/') - 1)))
-                WHEN 'UK'            THEN 'United Kingdom'
-                WHEN 'ENGLAND'       THEN 'United Kingdom'
-                WHEN 'GREAT BRITAIN' THEN 'United Kingdom'
-                WHEN 'SCOTLAND'      THEN 'United Kingdom'
-                WHEN 'WALES'         THEN 'United Kingdom'
-                WHEN 'BRITAIN'       THEN 'United Kingdom'
-                WHEN 'USA'           THEN 'United States'
-                WHEN 'US'            THEN 'United States'
-                WHEN 'UNITED STATES OF AMERICA' THEN 'United States'
-                WHEN 'AMERICA'       THEN 'United States'
-                WHEN 'W GERMANY'     THEN 'Germany'
-                WHEN 'E GERMANY'     THEN 'Germany'
-                WHEN 'WEST GERMANY'  THEN 'Germany'
-                WHEN 'EAST GERMANY'  THEN 'Germany'
-                WHEN 'USSR'          THEN 'Russia'
-                WHEN 'SOVIET UNION'  THEN 'Russia'
-                WHEN 'SOVIET'        THEN 'Russia'
-                WHEN 'CZECH REPUBLIC'THEN 'Czechia'
-                WHEN 'CZECHOSLOVAKIA'THEN 'Czechia'
-                WHEN 'REPUBLIC OF KOREA' THEN 'South Korea'
-                WHEN 'S KOREA'       THEN 'South Korea'
-                WHEN 'KYRGZ REPUBLIC'THEN 'Kyrgyzstan'
-                ELSE TRIM(LEFT(TRIM(nation), CHARINDEX('/', TRIM(nation) + '/') - 1))
-            END AS nation,    
-            ISNULL(TRIM(leaders),'N/A') AS leaders,    
-            ISNULL(TRIM(sponsor),'N/A') AS sponsor, 
-            success1, success2, success3, success4,
-            ISNULL(ascent1,'N/A') AS ascent1,
-            ISNULL(ascent2,'N/A') AS ascent2,
-            ISNULL(ascent3,'N/A') AS ascent3,
-            ISNULL(ascent4,'N/A') AS ascent4,
-            claimed, disputed,
-            ISNULL(countries,'N/A') AS countries,
-            ISNULL(approach,'N/A')  AS approach,
-            bcdate, smtdate,
-            TRY_CAST(
-                CASE 
-                    WHEN smttime IS NULL THEN NULL
-                    ELSE STUFF(RIGHT('0000' + CAST(CAST(smttime AS INT) AS VARCHAR(4)), 4), 3, 0, ':')
-                END AS TIME(0)
-            ) AS smttime,
-            smtdays, totdays, termdate,
-            ISNULL(TRIM(LEFT(TRIM(termreason_cleaned), CHARINDEX(',', TRIM(termreason_cleaned) + ',') - 1)),'N/A') AS termreason,
-            ISNULL(termnote,'N/A') AS termnote,
-            highpoint, traverse, ski, parapente, camps, rope, totmembers, smtmembers,
-            mdeaths, tothired, smthired, hdeaths, nohired, o2used, o2none, o2climb,
-            o2descent, o2sleep, o2medical, o2taken, o2unkwn,
-            ISNULL(othersmts,'N/A')  AS othersmts,
-            ISNULL(campsites,'N/A')  AS campsites,
-            ISNULL(accidents,'N/A')  AS accidents,
-            ISNULL(achievment,'N/A') AS achievment,
-            ISNULL(agency,'N/A')     AS agency,
-            comrte, stdrte, primrte, primmem, primref, primid, chksum
-        FROM (
-            SELECT *,
-                ROW_NUMBER() OVER(PARTITION BY expid ORDER BY year_id DESC) AS flag_last, 
-                TRIM(LEFT(TRIM(termreason), CHARINDEX('(', TRIM(termreason) + '(') - 1)) AS termreason_cleaned
-            FROM Bronze.Himalayan_Exped
-        ) t
-        WHERE flag_last = 1;
-
-        SET @End_Time = GETDATE();
-        PRINT '>> Load Duration: ' + CAST(DATEDIFF(second, @Start_Time, @End_Time) AS NVARCHAR) + ' seconds';
-        PRINT '>> ---------------------------------------------------------';
-
-        -- =========================================================================
-        -- 2. LOAD SILVER.HIMALAYAN_MEMBERS
-        -- =========================================================================
-        SET @Start_Time = GETDATE();
-        PRINT '>>> Truncating Table: Silver.Himalayan_Members';
-        TRUNCATE TABLE Silver.Himalayan_Members;
-        PRINT '>> Inserting Data Into Silver.Himalayan_Members';
-
-        ;WITH CleanedBronze AS (
-            SELECT 
-                TRIM(expid) AS clean_expid,
-                TRIM(peakid) AS clean_peakid,
-                TRIM(mseason) AS clean_mseason,
-                TRIM(fname) AS clean_fname,
-                TRIM(fname_nickname) AS clean_fname_nickname,
-                TRIM(lname) AS clean_lname,
-                TRIM(sex) AS clean_sex,
-                TRIM(citizen) AS clean_citizen,
-                TRIM(statuss) AS clean_statuss,
-                TRIM(residence) AS clean_residence,
-                TRIM(occupation) AS clean_occupation,
-                TRIM(mroute1) AS clean_mroute1,
-                TRIM(mroute2) AS clean_mroute2,
-                TRIM(mroute3) AS clean_mroute3,
-                TRIM(mascent1) AS clean_mascent1,
-                TRIM(mascent2) AS clean_mascent2,
-                TRIM(mascent3) AS clean_mascent3,
-                TRIM(mo2note) AS clean_mo2note,
-                TRIM(deathtype) AS clean_deathtype,
-                TRIM(deathclass) AS clean_deathclass,
-                TRIM(msmtbid) AS clean_msmtbid,
-                TRIM(msmtterm) AS clean_msmtterm,
-                membid, myear, yob, mhighpt, mperhighpt, hcn, mchksum, deathhgtm,
-                msmtdate1, msmtdate2, msmtdate3, deathdate, 
-                TRY_CAST(
-                    CASE 
-                        WHEN msmttime1 IS NULL THEN NULL
-                        ELSE STUFF(RIGHT('0000' + CAST(CAST(msmttime1 AS INT) AS VARCHAR(4)), 4), 3, 0, ':')
-                    END AS TIME(0)
-                ) AS msmttime1,
-                TRY_CAST(
-                    CASE 
-                        WHEN msmttime2 IS NULL THEN NULL
-                        ELSE STUFF(RIGHT('0000' + CAST(CAST(msmttime2 AS INT) AS VARCHAR(4)), 4), 3, 0, ':')
-                    END AS TIME(0)
-                ) AS msmttime2,
-                TRY_CAST(
-                    CASE 
-                        WHEN msmttime3 IS NULL THEN NULL
-                        ELSE STUFF(RIGHT('0000' + CAST(CAST(msmttime3 AS INT) AS VARCHAR(4)), 4), 3, 0, ':')
-                    END AS TIME(0)
-                ) AS msmttime3, 
-                TRY_CAST(
-                    CASE 
-                        WHEN deathtime IS NULL THEN NULL
-                        ELSE STUFF(RIGHT('0000' + CAST(CAST(deathtime AS INT) AS VARCHAR(4)), 4), 3, 0, ':')
-                    END AS TIME(0)
-                ) AS deathtime,
-                CASE WHEN leader = 1 OR leader = '1' THEN 1 ELSE 0 END AS clean_leader,
-                CASE WHEN deputy = 1 OR deputy = '1' THEN 1 ELSE 0 END AS clean_deputy,
-                CASE WHEN bconly = 1 OR bconly = '1' THEN 1 ELSE 0 END AS clean_bconly,
-                CASE WHEN nottobc = 1 OR nottobc = '1' THEN 1 ELSE 0 END AS clean_nottobc,
-                CASE WHEN support = 1 OR support = '1' THEN 1 ELSE 0 END AS clean_support,
-                CASE WHEN disabledd = 1 OR disabledd = '1' THEN 1 ELSE 0 END AS clean_disabledd,
-                CASE WHEN hired = 1 OR hired = '1' THEN 1 ELSE 0 END AS clean_hired,
-                CASE WHEN sherpa = 1 OR sherpa = '1' THEN 1 ELSE 0 END AS clean_sherpa,
-                CASE WHEN tibetan = 1 OR tibetan = '1' THEN 1 ELSE 0 END AS clean_tibetan,
-                CASE WHEN msuccess = 1 OR msuccess = '1' THEN 1 ELSE 0 END AS clean_msuccess,
-                CASE WHEN mclaimed = 1 OR mclaimed = '1' THEN 1 ELSE 0 END AS clean_mclaimed,
-                CASE WHEN mdisputed = 1 OR mdisputed = '1' THEN 1 ELSE 0 END AS clean_mdisputed,
-                CASE WHEN msolo = 1 OR msolo = '1' THEN 1 ELSE 0 END AS clean_msolo,
-                CASE WHEN mtraverse = 1 OR mtraverse = '1' THEN 1 ELSE 0 END AS clean_mtraverse,
-                CASE WHEN mski = 1 OR mski = '1' THEN 1 ELSE 0 END AS clean_mski,
-                CASE WHEN mparapente = 1 OR mparapente = '1' THEN 1 ELSE 0 END AS clean_mparapente,
-                CASE WHEN mspeed = 1 OR mspeed = '1' THEN 1 ELSE 0 END AS clean_mspeed,
-                CASE WHEN mo2used = 1 OR mo2used = '1' THEN 1 ELSE 0 END AS clean_mo2used,
-                CASE WHEN mo2none = 1 OR mo2none = '1' THEN 1 ELSE 0 END AS clean_mo2none,
-                CASE WHEN mo2climb = 1 OR mo2climb = '1' THEN 1 ELSE 0 END AS clean_mo2climb,
-                CASE WHEN mo2descent = 1 OR mo2descent = '1' THEN 1 ELSE 0 END AS clean_mo2descent,
-                CASE WHEN mo2sleep = 1 OR mo2sleep = '1' THEN 1 ELSE 0 END AS clean_mo2sleep,
-                CASE WHEN mo2medical = 1 OR mo2medical = '1' THEN 1 ELSE 0 END AS clean_mo2medical,
-                CASE WHEN death = 1 OR death = '1' THEN 1 ELSE 0 END AS clean_death
-            FROM Bronze.Himalayan_Members
-        )
-        INSERT INTO Silver.Himalayan_Members (
-            expid, membid, peakid, myear, mseason, fname, fname_nickname, lname, sex, yob,
-            citizen, statuss, residence, occupation, leader, deputy, bconly, nottobc,
-            support, disabledd, hired, sherpa, tibetan, msuccess, mclaimed, mdisputed,
-            msolo, mtraverse, mski, mparapente, mspeed, mhighpt, mperhighpt,
-            msmtdate1, msmtdate2, msmtdate3, msmttime1, msmttime2, msmttime3,
-            mroute1, mroute2, mroute3, mascent1, mascent2, mascent3,
-            mo2used, mo2none, mo2climb, mo2descent, mo2sleep, mo2medical, mo2note,
-            death, deathdate, deathtime, deathtype, deathhgtm, deathclass,
-            msmtbid, msmtterm, hcn, mchksum
-        )
-        SELECT
-            NULLIF(clean_expid, '') AS expid,
-            TRY_CAST(membid AS SMALLINT) AS membid,
-            NULLIF(clean_peakid, '') AS peakid,
-            TRY_CAST(myear AS SMALLINT) AS myear,
-            ISNULL(NULLIF(clean_mseason, ''), 'Unknown') AS mseason,
-            ISNULL(NULLIF(clean_fname, ''), 'Unknown') AS fname,
-            ISNULL(NULLIF(clean_fname_nickname, ''), 'Unknown') AS fname_nickname,
-            ISNULL(NULLIF(clean_lname, ''), 'Unknown') AS lname,
-            ISNULL(NULLIF(clean_sex, ''), 'U') AS sex,
-            TRY_CAST(yob AS SMALLINT) AS yob,
-            ISNULL(NULLIF(clean_citizen, ''), 'Unknown') AS citizen,
-            ISNULL(NULLIF(clean_statuss, ''), 'Unknown') AS statuss,
-            ISNULL(NULLIF(clean_residence, ''), 'Unknown') AS residence,
-            ISNULL(NULLIF(clean_occupation, ''), 'Unknown') AS occupation,
-            clean_leader, clean_deputy, clean_bconly, clean_nottobc, clean_support,
-            clean_disabledd, clean_hired, clean_sherpa, clean_tibetan, clean_msuccess,
-            clean_mclaimed, clean_mdisputed, clean_msolo, clean_mtraverse, clean_mski,
-            clean_mparapente, clean_mspeed,
-            TRY_CAST(mhighpt AS SMALLINT) AS mhighpt,
-            TRY_CAST(mperhighpt AS FLOAT) AS mperhighpt,
-            TRY_CONVERT(DATE, msmtdate1, 23) AS msmtdate1,
-            TRY_CONVERT(DATE, msmtdate2, 23) AS msmtdate2,
-            TRY_CONVERT(DATE, msmtdate3, 23) AS msmtdate3,
-            msmttime1, msmttime2, msmttime3,
-            NULLIF(clean_mroute1, '') AS mroute1,
-            NULLIF(clean_mroute2, '') AS mroute2,
-            NULLIF(clean_mroute3, '') AS mroute3,
-            NULLIF(clean_mascent1, '') AS mascent1,
-            NULLIF(clean_mascent2, '') AS mascent2,
-            NULLIF(clean_mascent3, '') AS mascent3,
-            clean_mo2used, clean_mo2none, clean_mo2climb, clean_mo2descent, clean_mo2sleep, clean_mo2medical,
-            NULLIF(clean_mo2note, '') AS mo2note,
-            clean_death,
-            TRY_CONVERT(DATE, deathdate, 23) AS deathdate,
-            deathtime,
-            NULLIF(clean_deathtype, '') AS deathtype,
-            TRY_CAST(deathhgtm AS SMALLINT) AS deathhgtm,
-            ISNULL(NULLIF(clean_deathclass, ''), 'Unknown') AS deathclass,
-            ISNULL(NULLIF(clean_msmtbid, ''), 'Unknown') AS msmtbid,
-            ISNULL(NULLIF(clean_msmtterm, ''), 'Unknown') AS msmtterm,
-            TRY_CAST(hcn AS FLOAT) AS hcn,
-            TRY_CAST(mchksum AS INT) AS mchksum
-        FROM CleanedBronze;
-
-        SET @End_Time = GETDATE();
-        PRINT '>> Load Duration: ' + CAST(DATEDIFF(second, @Start_Time, @End_Time) AS NVARCHAR) + ' seconds';
-        PRINT '>> ---------------------------------------------------------';
-
-        -- =========================================================================
-        -- 3. LOAD SILVER.HIMALAYAN_PEAKS
-        -- =========================================================================
-        SET @Start_Time = GETDATE();
-        PRINT '>>> Truncating Table: Silver.Himalayan_Peaks';
-        TRUNCATE TABLE Silver.Himalayan_Peaks;
-        PRINT '>> Inserting Data Into Silver.Himalayan_Peaks';
-
-        ;WITH Step1_RemoveQuestionMarks AS (
-            SELECT *,
-                TRIM(LEFT(TRIM(restrictt), CHARINDEX('?', TRIM(restrictt) + '?') - 1)) AS restrictt_cleaned
-            FROM Bronze.Himalayan_Peaks
-        ),
-        Step2_RemoveCommas AS (
-            SELECT *,
-                ISNULL(TRIM(LEFT(TRIM(restrictt_cleaned), CHARINDEX(',', TRIM(restrictt_cleaned) + ',') - 1)), 'N/A') AS restrictt_clear
-            FROM Step1_RemoveQuestionMarks
-        ),
-        Step3_RemoveParentheses AS (
-            SELECT *,
-                ISNULL(TRIM(LEFT(TRIM(restrictt_clear), CHARINDEX('(', TRIM(restrictt_clear) + '(') - 1)), 'N/A') AS restrictt_del
-            FROM Step2_RemoveCommas
-        )
-        INSERT INTO Silver.Himalayan_Peaks (
-            peakid, pkname, pkname2, locationn, heightm, heightf, himal, region, openn,
-            unlisted, trekking, trekyear, restrictt, phost, pstatus, pyear, pseason,
-            pmonth, pmonth_note, pday, first_ascent_date, pexpid, pcountry, psummiters, psmtnote
-        )
-        SELECT
-            peakid,
-            ISNULL(TRIM(pkname), 'N/A') AS pkname,
-            ISNULL(TRIM(pkname2), 'N/A') AS pkname2,
-            ISNULL(TRIM(LEFT(TRIM(locationn), CHARINDEX('(', TRIM(locationn) + '(') - 1)), 'N/A') AS locationn,
-            heightm, heightf,
-            ISNULL(TRIM(LEFT(TRIM(himal), CHARINDEX('/', TRIM(himal) + '/') - 1)), 'N/A') AS himal,
-            ISNULL(TRIM(region), 'N/A') AS region,
-            openn, unlisted, trekking, trekyear,
-            ISNULL(TRIM(LEFT(TRIM(restrictt_del), CHARINDEX(';', TRIM(restrictt_del) + ';') - 1)), 'N/A') AS restrictt,
-            TRIM(phost) AS phost,
-            TRIM(pstatus) AS pstatus,
-            pyear,
-            ISNULL(TRIM(pseason), 'N/A') AS pseason,
-            CASE UPPER(TRIM(pmonth))
-                WHEN 'JAN' THEN 'January'
-                WHEN 'FEB' THEN 'February'
-                WHEN 'MAR' THEN 'March'
-                WHEN 'APR' THEN 'April'
-                WHEN 'MAY' THEN 'May'
-                WHEN 'JUN' THEN 'June'
-                WHEN 'JUL' THEN 'July'
-                WHEN 'AUG' THEN 'August'
-                WHEN 'SEP' THEN 'September'
-                WHEN 'OCT' THEN 'October'
-                WHEN 'NOV' THEN 'November'
-                WHEN 'DEC' THEN 'December'
-                ELSE 'N/A'
-            END AS pmonth,
-            ISNULL(pmonth_note, 'N/A') AS pmonth_note,
-            pday,
-            TRY_CONVERT(DATE, first_ascent_date, 23) AS first_ascent_date,
-            ISNULL(TRIM(pexpid), 'N/A') AS pexpid,
-            ISNULL(TRIM(pcountry), 'N/A') AS pcountry,
-            CASE WHEN NULLIF(TRIM(psummiters), '') IS NULL THEN NULL ELSE TRIM(psummiters) END AS psummiters,
-            CASE WHEN NULLIF(TRIM(psmtnote), '') IS NULL THEN NULL ELSE TRIM(psmtnote) END AS psmtnote
-        FROM Step3_RemoveParentheses;
-
-        SET @End_Time = GETDATE();
-        PRINT '>> Load Duration: ' + CAST(DATEDIFF(second, @Start_Time, @End_Time) AS NVARCHAR) + ' seconds';
-        PRINT '>> ------------------------------------------------------------------------------------------';
-
-        SET @Batch_End_Time = GETDATE();
-        PRINT '=========================================================================================================';
-        PRINT ' ------ Batch loading completed --------------------------------------------------------------------------';
-        PRINT '>> Batch load Duration: ' + CAST(DATEDIFF(second, @Batch_Start_Time, @Batch_End_Time) AS NVARCHAR) + ' seconds';
-
+    CASE
+        WHEN state IN ('CT','ME','MA','NH','RI','VT','NJ','NY','PA')                                             THEN 'Northeast'
+        WHEN state IN ('IL','IN','MI','OH','WI','IA','KS','MN','MO','NE','ND','SD')                              THEN 'Midwest'
+        WHEN state IN ('DE','DC','FL','GA','MD','NC','SC','VA','WV','AL','KY','MS','TN','AR','LA','OK','TX')     THEN 'South'
+        WHEN state IN ('AZ','CO','ID','MT','NV','NM','UT','WY','AK','CA','HI','OR','WA')                         THEN 'West'
+        ELSE 'Unknown'
+    END us_region
+FROM Bronze.Customer_Complaints_Raw;
+    SET @End_Time = GETDATE();
+    PRINT'>>---------------------------------------------------------------------------------------'
+    PRINT'>> load Duration:' + CAST(DATEDIFF(second,@Start_Time,@End_Time) AS NVARCHAR) + ' seconds'
+    PRINT'>> --------------------------------------------------------------------------------------'
+    PRINT'>> ---------------------------------------------------------'
+    SET @Batch_End_Time = GETDATE();
+    PRINT'==========================================================================================================='
+    PRINT' ------ Batch loading completed-----------------'
+    PRINT'>> Batch load Duration:' + CAST(DATEDIFF(second,@Batch_Start_Time,@Batch_End_Time) AS NVARCHAR) + ' seconds'
+    PRINT'==========================================================================================================='
     END TRY
     BEGIN CATCH
-        PRINT '==========================================================================================================';
-        PRINT 'Error occurred during loading Silver layer';
-        PRINT 'Error Number : ' + CAST(ERROR_NUMBER() AS NVARCHAR);
-        PRINT 'Error Message: ' + ERROR_MESSAGE();
-        PRINT '==========================================================================================================';
-    END CATCH
+    PRINT'==========================================================================================================='
+    PRINT'Error occured during loading Silver'
+    PRINT'Error Message' + CAST(Error_Number () AS NVARCHAR) ------------------ casting to convert interger to string
+    PRINT'==========================================================================================================='
+END CATCH   
 END;
-GO
-
--- Execute the procedure
-EXEC Silver.load_SilverHimalayan;
